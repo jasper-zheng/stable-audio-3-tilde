@@ -1,0 +1,60 @@
+[project]
+name = "stable-audio-3-tilde"
+version = "0.1.0"
+description = "Export Stable Audio 3 (small-music) to ExecuTorch MLX .pte for the neural~ (Max/MSP) integration"
+readme = "README.md"
+# ExecuTorch (master, the only branch with the MLX backend) requires Python <3.14
+# and pins torch==2.12.0, so we match both here. See README.md "Prerequisites".
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "einops>=0.8.2",
+    "einops-exts>=0.0.4",
+    "numpy>=2.2.6",
+    "packaging>=26.0",
+    "safetensors>=0.7.0",
+    # Pinned to match ExecuTorch master: it builds against torch==2.12.0, and
+    # torch.export → ExecuTorch lowering requires the exact same torch at AOT time.
+    # torchaudio 2.11.0 declares no torch pin and is the build ExecuTorch pairs
+    # with torch 2.12.0. These wheels live on the PyTorch test channel (below),
+    # not PyPI. torchvision was unused and has been dropped.
+    "torch==2.12.0",
+    "torchaudio==2.11.0",
+    "tqdm>=4.67.3",
+    "huggingface-hub>=1.7.1",
+    "transformers>=5.8.0",
+    "soundfile>=0.13.1",
+    "librosa>=0.11.0",
+]
+# NOTE: the export step also requires `executorch` built with the MLX backend
+# (executorch.backends.mlx). It is not on PyPI — build it from source into this
+# same environment. See README.md "Prerequisites / Installation".
+
+# torch 2.12.0 / torchaudio 2.11.0 are release-candidate builds hosted on the
+# PyTorch "test" channel (Apple Silicon wheels live under .../test/cpu), not PyPI.
+[[tool.uv.index]]
+name = "pytorch-test"
+url = "https://download.pytorch.org/whl/test/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-test" }]
+torchaudio = [{ index = "pytorch-test" }]
+
+[project.scripts]
+stable-audio = "stable_audio_3.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["stable_audio_3"]
+
+[tool.ruff]
+exclude = [
+    "stable_audio_3/models",
+    "stable_audio_3/inference",
+    "stable_audio_3/interface",
+    "stable_audio_3/data",
+    "stable_audio_3/training",
+]

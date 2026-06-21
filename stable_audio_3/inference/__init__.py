@@ -1,0 +1,1 @@
+from stable_audio_3.inference.streaming import StreamingAutoencoder as StreamingAutoencoder
