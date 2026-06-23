@@ -1,5 +1,8 @@
 # Integrating Stable Audio 3 in Max/MSP
 
+[![Hugging Face](https://img.shields.io/badge/🤗%20Hugging%20Face-shuoyang--zheng%2Fstable--audio--3--tilde-yellow)](https://huggingface.co/shuoyang-zheng/stable-audio-3-tilde)
+
+
 **Export [Stable Audio 3](https://huggingface.co/collections/stabilityai/stable-audio-3) models for the
 [`neural.gen~`](https://github.com/jasper-zheng/neural_tilde) package in Max/MSP**  
 Models are exported with [ExecuTorch](https://github.com/pytorch/executorch) in MLX backend (MacOS / Apple Silicon only) for hardware-accelerated local inference. Supoorts distilled checkpoints (`small-music` and `small-sfx`). 
@@ -24,7 +27,9 @@ Audio-to-audio is the superset of the init-audio modes — the mode falls out of
 
 ## Prerequisites / Installation
 
-Exported models for `neural.gen~` are included in the `release` page. If you would like to export
+Some of the exported models for `neural.gen~` can be found at HuggingFace [stable-audio-3-tilde](https://huggingface.co/shuoyang-zheng/stable-audio-3-tilde).
+
+If you would like to export
 your own, you need an **Apple Silicon Mac** (the MLX backend is Metal-only) with **full Xcode**
 installed (the Metal compiler ships with Xcode, *not* the standalone Command Line Tools).
 <!-- 
