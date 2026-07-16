@@ -5,7 +5,7 @@
 
 **Export [Stable Audio 3](https://huggingface.co/collections/stabilityai/stable-audio-3) models for the
 [`neural.gen~`](https://github.com/jasper-zheng/neural_tilde) package in Max/MSP**  
-Models are exported with [ExecuTorch](https://github.com/pytorch/executorch) in MLX backend (MacOS / Apple Silicon only) for hardware-accelerated local inference. Supoorts distilled checkpoints (`small-music` and `small-sfx`). 
+Models are exported with [ExecuTorch](https://github.com/pytorch/executorch) in MLX backend (MacOS / Apple Silicon only) for hardware-accelerated local inference. Supoorts distilled checkpoints (`small-music` and `small-sfx`) and LoRA. 
 
 
 Two pipelines, each with an optional classifier-free guidance (`--cfg`) variant:
