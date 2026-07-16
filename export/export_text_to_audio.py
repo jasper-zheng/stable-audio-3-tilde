@@ -67,9 +67,7 @@ def build_gen_module(model, t_lat: int, cfg: bool) -> GenModule:
     if cfg:
         gm.register_attribute(
             "cfg_scale", 1.0, 1.0, 15.0,
-            "Classifier-free guidance scale (full APG). 1.0 = no guidance (output matches "
-            "the non-CFG model); try ~7.0 for stronger prompt adherence. Not useful for "
-            "distilled checkpoints.")
+            "Classifier-free guidance scale (full APG). 1.0 = no guidance (output matches the non-CFG model)")
     gm.register_noise("noise_x", [1, LATENT_CHANNELS, t_lat])
     gm.register_noise("noise_steps", [NUM_STEPS - 1, 1, LATENT_CHANNELS, t_lat])
 

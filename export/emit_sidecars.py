@@ -119,7 +119,7 @@ def model_sidecar(t_lat: int, steps: int, cfg: bool = False) -> dict:
             "forward": {
                 "inputs": inputs,
                 "output": {
-                    "name": "audio", "role": "audio", "dtype": "float32",
+                    "name": "audio", "role": "buffer", "dtype": "float32",
                     "shape": [1, 2, audio_len],
                     "channels": 2, "length": audio_len,
                     "sample_rate": 44100,
@@ -201,7 +201,7 @@ def model_sidecar_a2a(t_lat: int, steps: int, default_strength: float = 1.0,
             "forward": {
                 "inputs": inputs,
                 "output": {
-                    "name": "audio", "role": "audio", "dtype": "float32",
+                    "name": "audio", "role": "buffer", "dtype": "float32",
                     "shape": [1, 2, audio_len],
                     "channels": 2, "length": audio_len,
                     "sample_rate": 44100,
