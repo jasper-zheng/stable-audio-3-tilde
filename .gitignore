@@ -173,3 +173,6 @@ wandb/*
 export/artifacts
 
 executorch
+
+*.profraw
+demo.ipynb

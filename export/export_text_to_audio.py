@@ -19,14 +19,19 @@ Forward contract (positional; order + dtype are load-bearing for the host):
 With --cfg the contract adds neg_token_ids/neg_attention_mask (after attention_mask)
 and a runtime cfg_scale (after target_sec) — classifier-free guidance, ~2× DiT cost.
 
+With --lora-ckpt-path the LoRA/DoRA is merged into the weights before tracing, so the
+forward contract is unchanged — a LoRA export differs only in its weights and filename.
+--lora-strength is baked in and frozen: retuning it means re-exporting.
+
 Run:
   python export/export_text_to_audio.py --model small-music --t-lat 32 [--cfg]
+       [--lora-ckpt-path lora.safetensors] [--lora-strength 2.0]
 
-Produces, in export/artifacts/:
-  {model}_text_to_audio[_cfg]_T{t}.pte                    the model
-  {model}_text_to_audio[_cfg]_T{t}.json                   model sidecar (neural.gen~ profile)
-  {model}_text_to_audio[_cfg]_T{t}.tokenizer.config.json  tokenizer config
-  {model}_text_to_audio[_cfg]_T{t}.tokenizer.json         copied HF tokenizer
+Produces, in export/artifacts/ (`{lora}` = the LoRA tag, absent without --lora-ckpt-path):
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}].pte                    the model
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}].json                   model sidecar (neural.gen~ profile)
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}].tokenizer.config.json  tokenizer config
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}].tokenizer.json         copied HF tokenizer
 """
 
 import argparse
@@ -37,8 +42,8 @@ from neural_tilde import GenModule
 
 sys.path.insert(0, os.path.dirname(__file__))
 from sa3_modules import build_full_pipeline, build_full_pipeline_cfg, NUM_STEPS
-from _common import (register_sa3_tokenizer, default_target_sec,
-                     MAX_LENGTH, SAMPLES_PER_LATENT, SAMPLE_RATE)
+from _common import (register_sa3_tokenizer, default_target_sec, merge_lora_for_export,
+                     lora_tag, MAX_LENGTH, SAMPLES_PER_LATENT, SAMPLE_RATE)
 
 from stable_audio_3.model import StableAudioModel
 
@@ -84,13 +89,22 @@ def build_gen_module(model, t_lat: int, cfg: bool) -> GenModule:
     return gm
 
 
-def run_export(model_name, t_lat, device="cpu", cfg=False, seed=0):
+def run_export(model_name, t_lat, device="cpu", cfg=False, seed=0,
+               *, loras=None, lora_strength=2.0, lora_name=None, force=False):
     assert t_lat % 2 == 0, f"T_lat must be even (got {t_lat})"
-    stem = f"{model_name}_text_to_audio{'_cfg' if cfg else ''}_T{t_lat}"
-    print(f"SA3 text-to-audio export  ({model_name}, T_lat={t_lat}{', +CFG' if cfg else ''})")
+    tag = lora_tag(loras, lora_strength, lora_name)
+    stem = f"{model_name}_text_to_audio{'_cfg' if cfg else ''}_T{t_lat}{'_' + tag if tag else ''}"
+    print(f"SA3 text-to-audio export  ({model_name}, T_lat={t_lat}{', +CFG' if cfg else ''}"
+          f"{', +LoRA' if loras else ''})")
 
     print(f"  Loading {model_name} from HuggingFace...")
     sa3 = StableAudioModel.from_pretrained(model_name, device=device, model_half=False)
+
+    # Before the builders: they take the DiT/conditioner by reference, so the merged
+    # weights land in the pipeline on their own.
+    if loras:
+        print(f"  Merging LoRA at strength {lora_strength} (baked in, frozen)...")
+        merge_lora_for_export(sa3, loras, lora_strength, model_name, force=force)
 
     print("  Building pipeline...")
     if cfg:
@@ -123,9 +137,30 @@ def main():
                         help="default RNG seed written to the sidecar (host may override at runtime)")
     parser.add_argument("--device", default="cpu",
                         help="PyTorch device when loading the model; doesn't affect the .pte backend device")
+
+    # --- LoRA ---
+    parser.add_argument("--lora-ckpt-path", action="append", dest="loras", metavar="PATH",
+                        help="LoRA/DoRA checkpoint to bake into the exported weights. "
+                             "Repeat to stack multiple LoRAs.")
+    parser.add_argument("--lora-strength", type=float, default=2.0,
+                        help="LoRA strength, baked in at export time (frozen; the .pte cannot "
+                             "retune it, so a different strength means a different export)")
+    parser.add_argument("--lora-name", default=None, metavar="TAG",
+                        help="filename tag for the LoRA, replacing the one derived from the "
+                             "checkpoint name + strength")
+    parser.add_argument("--force", action="store_true",
+                        help="merge the LoRA even if it was trained on a different base model")
     args = parser.parse_args()
 
-    pte_path = run_export(args.model, args.t_lat, args.device, args.cfg, args.seed)
+    if not args.loras:
+        if args.lora_name:
+            parser.error("--lora-name requires --lora-ckpt-path")
+        if args.force:
+            parser.error("--force requires --lora-ckpt-path")
+
+    pte_path = run_export(args.model, args.t_lat, args.device, args.cfg, args.seed,
+                          loras=args.loras, lora_strength=args.lora_strength,
+                          lora_name=args.lora_name, force=args.force)
     print(f"\nExport complete: {pte_path}")
 
 

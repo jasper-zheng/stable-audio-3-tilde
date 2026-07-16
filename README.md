@@ -88,7 +88,7 @@ run `uv run huggingface-cli login` if you haven't authenticated.
 ### Important limitation:  
 1. The generation length need to be fixed at export time. The exported model always generates in this length (set by `--t-lat`, total latents). The default is `--t-lat 32` (≈ 2.97 s). You need to **export multiple models if you want to support different generation lengths**.
 2. `--t-lat` must be an even number, it sets the generation length (`4096 x T_lat` samples at 44.1 kHz).
-3. LoRA / fine-tuning is not supported yet. The exported model is frozen and cannot be further trained.
+3. LoRA is merged into the weights at export time, so `--lora-strength` is **frozen** — the exported model can't retune it. Export once per strength (see [LoRA](#lora)). The exported model is frozen and cannot be further trained.
 
 ### Commands:
 
@@ -113,6 +113,29 @@ uv run python export/export_audio_to_audio.py --model small-music --t-lat 32
 # add --cfg for the classifier-free-guidance variant with negative prompt
 uv run python export/export_audio_to_audio.py --model small-music --t-lat 32 --cfg
 ```
+
+### LoRA
+
+Both exporters can bake a LoRA / DoRA checkpoint into the exported weights. The LoRA is merged before tracing, so the model's inputs are unchanged — a LoRA export differs only in its weights
+and its filename.
+
+```bash
+uv run python export/export_text_to_audio.py --model small-music --t-lat 32 \
+    --lora-ckpt-path lora_checkpoints/my-lora.safetensors --lora-strength 2.0
+```
+
+| flag | |
+|---|---|
+| `--lora-ckpt-path` | checkpoint to merge; repeat to stack several |
+| `--lora-strength` | strength baked in at export (default 2.0) |
+| `--lora-name` | filename |
+| `--force` | merge despite a base-model mismatch |
+
+Things to know:
+
+- **Strength is frozen.** It is baked into the weights, so one `.pte` per strength. `neural.gen~` has no runtime LoRA-strength control.
+- The exporter refuses a checkpoint whose base model disagrees with `--model` (pass `--force` to override), and errors if the checkpoint doesn't actually match the model — otherwise it would merge as a no-op and quietly ship the base weights under a LoRA filename.
+
 
 ### Exported files
 
