@@ -30,54 +30,31 @@ Audio-to-audio is the superset of the init-audio modes — the mode falls out of
 Some of the exported models for `neural.gen~` can be found at HuggingFace [stable-audio-3-tilde](https://huggingface.co/shuoyang-zheng/stable-audio-3-tilde).
 
 If you would like to export
-your own, you need an **Apple Silicon Mac** (the MLX backend is Metal-only) with **full Xcode**
-installed (the Metal compiler ships with Xcode, *not* the standalone Command Line Tools).
-<!-- 
-> **Why the specific versions below?** The MLX backend only exists on ExecuTorch's `main` branch,
-> which builds against `torch==2.12.0` and requires Python `<3.14`. `torch.export` → ExecuTorch
-> lowering must run on the *same* torch ExecuTorch was built with, so this repo pins
-> `torch==2.12.0` / `torchaudio==2.11.0` (from the PyTorch *test* channel, not PyPI). `uv sync`
-> handles this for you — don't mix in a different torch. -->
+your own, you need an **Apple Silicon Mac** (the MLX backend is Metal-only) and `neural_tilde`
+**v0.1.0 or newer** in Max.
 
-**1. Check the Metal compiler is available** (install Xcode from the App Store if it errors):
+<!-- > **Why the specific versions?** The exported `.pte` is run by the ExecuTorch runtime built into
+> the `neural.gen~` external, which for `neural_tilde` v0.1.0 is **ExecuTorch 1.5.1**. So this
+> repo pins `executorch==1.5.1` (its PyPI wheel ships the MLX backend), and the `torch==2.14.0`
+> it was built against, since `torch.export` → ExecuTorch lowering must run on the same torch.
+> `uv sync` handles this for you, so don't mix in a different torch or ExecuTorch. -->
 
-```bash
-xcrun -sdk macosx --find metal
-```
-
-**2. Clone this repo and install the Python environment** with
+**1. Clone this repo and install the Python environment** with
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 git clone https://github.com/jasper-zheng/stable-audio-3-tilde.git
 cd stable-audio-3-tilde
-uv sync                            # installs torch + torchaudio + the rest
-uv pip install pip wheel "cmake<4" # build tools ExecuTorch's installer needs inside the venv
-uv pip install neural-tilde        # the neural.gen~ integration package
+uv sync     # installs torch, ExecuTorch (with MLX), neural-tilde and the rest
 ```
 
-**3. Build ExecuTorch with the MLX backend into this same venv.** It is **not** on PyPI — build it
-from source. From the repo root:
+Verify the MLX backend is importable:
 
 ```bash
-git clone https://github.com/pytorch/executorch.git
-source .venv/bin/activate              # use this repo's venv so ExecuTorch installs into it
-cd executorch
-python install_executorch.py --minimal # builds the MLX backend 
-cd ..
+uv run python -c "from executorch.backends.mlx.partitioner import MLXPartitioner; print('MLX backend OK')"
 ```
 
-The build takes a while (it compiles native + Metal code). See the
-[ExecuTorch MLX Getting Started](https://github.com/pytorch/executorch/tree/main/backends/mlx#getting-started)
-guide for details and troubleshooting.
-
-Verify the backend is importable:
-
-```bash
-python -c "import executorch.backends.mlx; print('MLX backend OK')"
-```
-
-**4. HuggingFace access** to the checkpoints
+**2. HuggingFace access** to the checkpoints
 ([`stabilityai/stable-audio-3-small-music`](https://huggingface.co/stabilityai/stable-audio-3-small-music)
 and [`stabilityai/stable-audio-3-small-sfx`](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)) —
 run `uv run huggingface-cli login` if you haven't authenticated.
