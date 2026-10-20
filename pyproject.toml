@@ -16,9 +16,12 @@ dependencies = [
     # backend. torch is pinned to the version executorch 1.5.1 was built against, since
     # torch.export → ExecuTorch lowering needs the same torch at AOT time.
     # torchaudio 2.11.0 declares no torch pin and works with torch 2.14.
+    # On Windows, torch comes from the CUDA 13.0 index (see [tool.uv.sources]) and
+    # triton-windows is added: the CUDA delegate compiles Triton kernels at export.
     "torch==2.14.0",
     "torchaudio==2.11.0",
     "executorch==1.5.1",
+    "triton-windows~=3.8.0; sys_platform == 'win32'",
     "neural-tilde>=0.1.0",
     "tqdm>=4.67.3",
     "huggingface-hub>=1.7.1",
@@ -29,6 +32,16 @@ dependencies = [
 
 [project.scripts]
 stable-audio = "stable_audio_3.cli:main"
+
+# Windows exports use the CUDA delegate, which needs a CUDA build of torch. macOS keeps
+# PyPI's torch (MLX delegate).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

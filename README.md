@@ -5,7 +5,7 @@
 
 **Export [Stable Audio 3](https://huggingface.co/collections/stabilityai/stable-audio-3) models for the
 [`neural.gen~`](https://github.com/jasper-zheng/neural_tilde) package in Max/MSP**  
-Models are exported with [ExecuTorch](https://github.com/pytorch/executorch) in MLX backend (MacOS / Apple Silicon only) for hardware-accelerated local inference. Supoorts distilled checkpoints (`small-music` and `small-sfx`) and LoRA. 
+Models are exported with [ExecuTorch](https://github.com/pytorch/executorch) for hardware-accelerated local inference: MLX backend on macOS (Apple Silicon), or CUDA backend on Windows (x64 + NVIDIA GPU). Supoorts distilled checkpoints (`small-music` and `small-sfx`) and LoRA. 
 
 
 Two pipelines, each with an optional classifier-free guidance (`--cfg`) variant:
@@ -29,9 +29,17 @@ Audio-to-audio is the superset of the init-audio modes — the mode falls out of
 
 Some of the exported models for `neural.gen~` can be found at HuggingFace [stable-audio-3-tilde](https://huggingface.co/shuoyang-zheng/stable-audio-3-tilde).
 
-If you would like to export
-your own, you need an **Apple Silicon Mac** (the MLX backend is Metal-only) and `neural_tilde`
-**v0.1.0 or newer** in Max.
+If you would like to export your own, you need `neural_tilde` **v0.1.0 or newer** in Max, and
+export on the platform the model will run on:
+
+- **macOS (MLX):** an **Apple Silicon Mac** (the MLX backend is Metal-only).
+- **Windows (CUDA):** Windows 10/11 x64 with an **NVIDIA GPU** (Turing / RTX 20xx or newer), the
+  **CUDA Toolkit 13.0** (driver ≥ 580) and **Visual Studio 2022** with the "Desktop development
+  with C++" workload, and a **Developer PowerShell for VS 2022** (`cl.exe` must be on `PATH`).
+
+  **Note:** On Windows, exporting models on CUDA needs about **35 GB of RAM** at its peak,
+  plus ~4.5 GB of GPU memory. Set a fixed page file of 32 GB (System Properties → Advanced →
+  Performance Settings → Advanced → Virtual memory) and reboot.
 
 <!-- > **Why the specific versions?** The exported `.pte` is run by the ExecuTorch runtime built into
 > the `neural.gen~` external, which for `neural_tilde` v0.1.0 is **ExecuTorch 1.5.1**. So this
@@ -45,13 +53,18 @@ your own, you need an **Apple Silicon Mac** (the MLX backend is Metal-only) and 
 ```bash
 git clone https://github.com/jasper-zheng/stable-audio-3-tilde.git
 cd stable-audio-3-tilde
-uv sync     # installs torch, ExecuTorch (with MLX), neural-tilde and the rest
+uv sync     # installs torch, ExecuTorch, neural-tilde and the rest
 ```
 
-Verify the MLX backend is importable:
+On Windows, `uv sync` installs the CUDA 13.0 build of torch and `triton-windows` automatically.
+
+Verify the backend is importable:
 
 ```bash
+# macOS
 uv run python -c "from executorch.backends.mlx.partitioner import MLXPartitioner; print('MLX backend OK')"
+# Windows
+uv run python -c "import torch, triton; from executorch.backends.cuda.cuda_partitioner import CudaPartitioner; print('CUDA backend OK' if torch.cuda.is_available() else 'no CUDA GPU')"
 ```
 
 **2. HuggingFace access** to the checkpoints
@@ -68,6 +81,10 @@ run `uv run huggingface-cli login` if you haven't authenticated.
 3. LoRA is merged into the weights at export time, so `--lora-strength` is **frozen** — the exported model can't retune it. Export once per strength (see [LoRA](#lora)). The exported model is frozen and cannot be further trained.
 
 ### Commands:
+
+The same commands work on both platforms. The backend follows the platform: MLX on macOS, CUDA on
+Windows (or pick one with `--delegate mlx|cuda`). On Windows, run them from a **Developer PowerShell
+for VS 2022**. A CUDA export takes much longer, because every kernel is autotuned on GPU.
 
 #### text-to-audio 
 ```bash
@@ -116,17 +133,20 @@ Things to know:
 
 ### Exported files
 
-Each run writes four files into `export/artifacts/`:
+Each run writes these files into `export/artifacts/`:
 
 ```
-*.pte                    the ExecuTorch model (~2.9-3.3 GB)
+*.pte                    the ExecuTorch model (MLX: ~2.9-3.3 GB with the weights; CUDA: ~50 MB)
+*.ptd                    [CUDA only:] the weights (~2.9 GB), found through `data_file` in the JSON
 *.json                   sidecar (to inform `neural.gen~` about in/outputs, attributes, etc.)
 *.tokenizer.config.json  tokenizer config
 *.tokenizer.json         copied HF tokenizer
 ```
 
-where the filename is `{model}_text_to_audio[_cfg]_T{t}` or `{model}_audio_to_audio[_cfg]_T{t}`. The
-`neural.gen~` host loads this bundle.
+where the filename is `{model}_text_to_audio[_cfg]_T{t}` or `{model}_audio_to_audio[_cfg]_T{t}`, plus
+a `_cuda` suffix for CUDA exports (e.g. `small-music_text_to_audio_T32_cuda.pte`). The
+`neural.gen~` host loads this bundle; keep all the files together. A CUDA export runs only on
+Windows with an NVIDIA GPU (Turing / RTX 20xx or newer), and an MLX export only on Apple Silicon.
 
 
 ## Model I/O

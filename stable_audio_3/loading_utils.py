@@ -33,7 +33,7 @@ def load_autoencoder(config_path: str, ckpt_path: str, device: str = "cpu"):
     Standalone AE-only checkpoints (e.g. stabilityai/SAME-L / SAME-S) have no prefix.
     """
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
 
     autoencoder = create_autoencoder_from_config(config["model"], config["sample_rate"])

@@ -1,10 +1,11 @@
 """
-SA3 text-to-audio exporter → one ExecuTorch MLX `.pte` (via neural_tilde.GenModule).
+SA3 text-to-audio exporter → one ExecuTorch `.pte` (via neural_tilde.GenModule), lowered
+to MLX (macOS / Apple Silicon) or CUDA (Windows x64 + NVIDIA).
 
 Composes T5Gemma text conditioning + 8-step pingpong DiT + SAME-S decode (defined in
 `sa3_modules.py`), describes it to the downstreamed `neural_tilde.GenModule` exporter
 (register each input by name + role, then one `forward` generation method), and lets
-`GenModule.export_to_pte` trace, MLX-lower and write the `.pte` + sidecars that the
+`GenModule.export_to_pte` trace, lower and write the `.pte` + sidecars that the
 `neural.gen~` Max external loads and runs. One ExecuTorch call: pre-tokenized prompt +
 duration + seeded noise → stereo PCM audio.
 
@@ -23,15 +24,21 @@ With --lora-ckpt-path the LoRA/DoRA is merged into the weights before tracing, s
 forward contract is unchanged — a LoRA export differs only in its weights and filename.
 --lora-strength is baked in and frozen: retuning it means re-exporting.
 
+--delegate picks the backend (default: mlx on macOS, cuda elsewhere). A CUDA export
+needs an NVIDIA GPU + MSVC on the export machine, writes its weights to a `.ptd` beside
+the `.pte`, and gets a `_cuda` filename suffix (it only runs on Windows/NVIDIA).
+
 Run:
   python export/export_text_to_audio.py --model small-music --t-lat 32 [--cfg]
-       [--lora-ckpt-path lora.safetensors] [--lora-strength 2.0]
+       [--delegate mlx|cuda] [--lora-ckpt-path lora.safetensors] [--lora-strength 2.0]
 
-Produces, in export/artifacts/ (`{lora}` = the LoRA tag, absent without --lora-ckpt-path):
-  {model}_text_to_audio[_cfg]_T{t}[_{lora}].pte                    the model
-  {model}_text_to_audio[_cfg]_T{t}[_{lora}].json                   model sidecar (neural.gen~ profile)
-  {model}_text_to_audio[_cfg]_T{t}[_{lora}].tokenizer.config.json  tokenizer config
-  {model}_text_to_audio[_cfg]_T{t}[_{lora}].tokenizer.json         copied HF tokenizer
+Produces, in export/artifacts/ (`{lora}` = the LoRA tag, absent without --lora-ckpt-path;
+`{d}` = `_cuda` for the CUDA delegate, empty for MLX):
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}]{d}.pte                    the model
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}]{d}.ptd                    weights (CUDA only)
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}]{d}.json                   model sidecar (neural.gen~ profile)
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}]{d}.tokenizer.config.json  tokenizer config
+  {model}_text_to_audio[_cfg]_T{t}[_{lora}]{d}.tokenizer.json         copied HF tokenizer
 """
 
 import argparse
@@ -43,7 +50,8 @@ from neural_tilde import GenModule
 sys.path.insert(0, os.path.dirname(__file__))
 from sa3_modules import build_full_pipeline, build_full_pipeline_cfg, NUM_STEPS
 from _common import (register_sa3_tokenizer, default_target_sec, merge_lora_for_export,
-                     lora_tag, MAX_LENGTH, SAMPLES_PER_LATENT, SAMPLE_RATE)
+                     lora_tag, DELEGATES, default_delegate, artifact_suffix, export_kwargs,
+                     locate_flatc, MAX_LENGTH, SAMPLES_PER_LATENT, SAMPLE_RATE)
 
 from stable_audio_3.model import StableAudioModel
 
@@ -90,12 +98,15 @@ def build_gen_module(model, t_lat: int, cfg: bool) -> GenModule:
 
 
 def run_export(model_name, t_lat, device="cpu", cfg=False, seed=0,
-               *, loras=None, lora_strength=2.0, lora_name=None, force=False):
+               *, loras=None, lora_strength=2.0, lora_name=None, force=False,
+               delegate=None):
     assert t_lat % 2 == 0, f"T_lat must be even (got {t_lat})"
     tag = lora_tag(loras, lora_strength, lora_name)
-    stem = f"{model_name}_text_to_audio{'_cfg' if cfg else ''}_T{t_lat}{'_' + tag if tag else ''}"
+    delegate = delegate or default_delegate()
+    stem = (f"{model_name}_text_to_audio{'_cfg' if cfg else ''}_T{t_lat}"
+            f"{'_' + tag if tag else ''}{artifact_suffix(delegate)}")
     print(f"SA3 text-to-audio export  ({model_name}, T_lat={t_lat}{', +CFG' if cfg else ''}"
-          f"{', +LoRA' if loras else ''})")
+          f"{', +LoRA' if loras else ''}, {delegate})")
 
     print(f"  Loading {model_name} from HuggingFace...")
     sa3 = StableAudioModel.from_pretrained(model_name, device=device, model_half=False)
@@ -117,16 +128,17 @@ def run_export(model_name, t_lat, device="cpu", cfg=False, seed=0,
     register_sa3_tokenizer(gm, model_name, MAX_LENGTH)
     gm.set_seed(seed)
 
-    print("  Exporting + lowering to MLX (GenModule.export_to_pte)...")
+    print(f"  Exporting + lowering to {delegate.upper()} (GenModule.export_to_pte)...")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    locate_flatc()
     pte_path = gm.export_to_pte(os.path.join(OUTPUT_DIR, stem),
-                                delegate="mlx", decompose_conv=True)
+                                delegate=delegate, **export_kwargs(delegate))
     return pte_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export the SA3 text-to-audio pipeline to a single ExecuTorch MLX .pte "
+        description="Export the SA3 text-to-audio pipeline to a single ExecuTorch .pte "
                     "via neural_tilde.GenModule")
     parser.add_argument("--model", default="small-music", choices=MODELS,
                         help="distilled checkpoint to export (base models are not supported)")
@@ -135,6 +147,9 @@ def main():
                         help="export the CFG variant (runtime cfg_scale + negative prompt; ~2x DiT cost)")
     parser.add_argument("--seed", type=int, default=0,
                         help="default RNG seed written to the sidecar (host may override at runtime)")
+    parser.add_argument("--delegate", default=default_delegate(), choices=DELEGATES,
+                        help="ExecuTorch backend: mlx (macOS / Apple Silicon) or cuda (Windows x64 + "
+                             "NVIDIA). Defaults to the one for this platform.")
     parser.add_argument("--device", default="cpu",
                         help="PyTorch device when loading the model; doesn't affect the .pte backend device")
 
@@ -160,7 +175,8 @@ def main():
 
     pte_path = run_export(args.model, args.t_lat, args.device, args.cfg, args.seed,
                           loras=args.loras, lora_strength=args.lora_strength,
-                          lora_name=args.lora_name, force=args.force)
+                          lora_name=args.lora_name, force=args.force,
+                          delegate=args.delegate)
     print(f"\nExport complete: {pte_path}")
 
 

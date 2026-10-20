@@ -51,7 +51,7 @@ class StableAudioModel:
 
         model_cfg = all_models[model_name]
         local_config, local_ckpt = model_cfg.resolve()
-        with open(local_config) as f:
+        with open(local_config, encoding="utf-8") as f:
             model_config = json.load(f)
 
         model = load_diffusion_cond(
@@ -487,7 +487,7 @@ class AutoencoderModel:
         cfg = ae_models[model_name]
         local_config, local_ckpt = cfg.resolve()
 
-        with open(local_config) as f:
+        with open(local_config, encoding="utf-8") as f:
             sample_rate = json.load(f)["sample_rate"]
 
         autoencoder = load_autoencoder(local_config, local_ckpt, device=device)
