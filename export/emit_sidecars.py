@@ -41,7 +41,10 @@ def find_tokenizer_dir(repo_id: str = None) -> str:
     Prefers the given model's own repo; falls back to any cached SA3 small-* snapshot
     (the conditioner tokenizer is the shared `t5gemma-b-b-ul2` across the small models).
     """
-    cache = os.path.expanduser("~/.cache/huggingface/hub")
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE as cache  # honours HF_HOME / HF_HUB_CACHE
+    except ImportError:
+        cache = os.path.expanduser("~/.cache/huggingface/hub")
     pats = []
     if repo_id:
         pats.append(os.path.join(cache, f"models--{repo_id.replace('/', '--')}/snapshots/*/{SUBFOLDER}"))
@@ -230,7 +233,7 @@ def _emit_tokenizer(stem: str, out: str, tokenizer_dir: str, max_length: int,
                     repo_id: str = None) -> None:
     """Copy the HF fast tokenizer next to the .pte and emit its standalone config."""
     tok_dir = tokenizer_dir or find_tokenizer_dir(repo_id)
-    with open(os.path.join(tok_dir, "tokenizer_config.json")) as f:
+    with open(os.path.join(tok_dir, "tokenizer_config.json"), encoding="utf-8") as f:
         hf_cfg = json.load(f)
     tok_filename = f"{stem}.tokenizer.json"
     shutil.copyfile(os.path.join(tok_dir, "tokenizer.json"),

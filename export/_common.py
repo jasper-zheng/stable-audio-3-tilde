@@ -2,21 +2,109 @@
 Shared helpers for the two SA3 export entry scripts (export_text_to_audio.py /
 export_audio_to_audio.py).
 
-The torch.export → MLX-lower → write-.pte step and the sidecar/tokenizer-bundle
+The torch.export → lower → write-.pte step and the sidecar/tokenizer-bundle
 emission are no longer hand-rolled here: both are now owned by the downstreamed
 ``neural_tilde.GenModule`` exporter (``GenModule.export_to_pte``). What remains is
-the SA3-specific glue: the latent/sample-rate constants, locating the HuggingFace
-tokenizer to hand to ``GenModule.register_tokenizer``, and baking a LoRA into the
-model's weights before it is handed to the pipeline builders.
+the SA3-specific glue: the latent/sample-rate constants, the per-delegate export
+options (MLX on macOS, CUDA on Windows), locating the HuggingFace tokenizer to hand
+to ``GenModule.register_tokenizer``, and baking a LoRA into the model's weights
+before it is handed to the pipeline builders.
 """
 
 import json
+import math
 import os
 import re
+import sys
 
 MAX_LENGTH = 256          # SA3 conditioner token length
 SAMPLES_PER_LATENT = 4096
 SAMPLE_RATE = 44100
+
+
+# --- Delegate -----------------------------------------------------------------
+
+DELEGATES = ("mlx", "cuda")
+
+
+def default_delegate() -> str:
+    """MLX on macOS (Apple Silicon), CUDA everywhere else (Windows x64 + NVIDIA)."""
+    return "mlx" if sys.platform == "darwin" else "cuda"
+
+
+def artifact_suffix(delegate: str) -> str:
+    """Filename suffix marking the backend. A CUDA .pte (+ its .ptd) only runs on
+    Windows/NVIDIA, so it must not share a name with the MLX export of the same model."""
+    return "" if delegate == "mlx" else f"_{delegate}"
+
+
+def locate_flatc() -> None:
+    """Point ``FLATC_EXECUTABLE`` at the executorch wheel's ``flatc.exe`` on Windows.
+
+    ExecuTorch serializes the program with ``flatc``, looking for a bundled resource
+    named ``flatc`` (no ``.exe``) and otherwise falling back to ``PATH`` — which only
+    holds the env's ``flatc.exe`` while the env is activated. No-op elsewhere or when
+    ``FLATC_EXECUTABLE`` is already set.
+    """
+    if sys.platform != "win32" or os.environ.get("FLATC_EXECUTABLE"):
+        return
+    import importlib.resources
+    try:
+        flatc = importlib.resources.files("executorch.data.bin").joinpath("flatc.exe")
+    except ModuleNotFoundError:
+        return
+    if flatc.is_file():
+        os.environ["FLATC_EXECUTABLE"] = str(flatc)
+
+
+def export_kwargs(delegate: str) -> dict:
+    """``GenModule.export_to_pte`` options for a delegate.
+
+    ``decompose_conv`` is needed by MLX and harmless for CUDA (neural_tilde then
+    rewrites conv1d to conv2d itself). CUDA additionally needs SDPA decomposed, see
+    :func:`decompose_sdpa`.
+    """
+    if delegate == "cuda":
+        return {"decompose_conv": True, "graph_transforms": [decompose_sdpa]}
+    return {"decompose_conv": True}
+
+
+def decompose_sdpa(exported):
+    """Rewrite ``aten.scaled_dot_product_attention`` as explicit matmul/softmax math.
+
+    ExecuTorch's CUDA backend replaces every SDPA node with its Triton kernel, which
+    only accepts bfloat16 q/k/v and a bool mask, so SA3's fp32 attention (the DiT, and
+    T5Gemma with its additive mask) fails to lower. Decomposed, the attention is just
+    matmuls + softmax that AOTInductor compiles like the rest of the graph.
+    """
+    import torch
+    return exported.run_decompositions(
+        {torch.ops.aten.scaled_dot_product_attention.default: _sdpa_math})
+
+
+def _sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False,
+               scale=None, enable_gqa=False):
+    """Inference SDPA (``dropout_p`` ignored) matching torch's math backend, including
+    zeros (not NaN) for a query row whose keys are all masked out."""
+    import torch
+    if enable_gqa and key.shape[-3] != query.shape[-3]:
+        rep = query.shape[-3] // key.shape[-3]
+        key = key.repeat_interleave(rep, dim=-3)
+        value = value.repeat_interleave(rep, dim=-3)
+    if scale is None:
+        scale = 1.0 / math.sqrt(query.shape[-1])
+    scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+    if is_causal:
+        n_q, n_k = query.shape[-2], key.shape[-2]
+        keep = torch.ones(n_q, n_k, dtype=torch.bool, device=query.device).tril()
+        scores = scores.masked_fill(~keep, float("-inf"))
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            scores = scores.masked_fill(~attn_mask, float("-inf"))
+        else:
+            scores = scores + attn_mask
+    probs = torch.softmax(scores, dim=-1).nan_to_num(0.0)
+    return torch.matmul(probs, value)
 
 
 def default_target_sec(t_lat: int) -> float:
@@ -39,7 +127,7 @@ def register_sa3_tokenizer(gm, model_name: str, max_length: int = MAX_LENGTH) ->
     from emit_sidecars import find_tokenizer_dir, repo_for
 
     tok_dir = find_tokenizer_dir(repo_for(model_name))
-    with open(os.path.join(tok_dir, "tokenizer_config.json")) as f:
+    with open(os.path.join(tok_dir, "tokenizer_config.json"), encoding="utf-8") as f:
         hf_cfg = json.load(f)
     gm.register_tokenizer(
         os.path.join(tok_dir, "tokenizer.json"),
